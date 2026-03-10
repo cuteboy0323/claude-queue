@@ -7,9 +7,10 @@
 #   claude-queue create [options]  Create issues from text or interactively
 #
 # Solve options:
+#   --issue ID         Solve specific issue(s) by ID, URL, or comma-separated IDs
 #   --max-retries N    Max retries per issue (default: 3)
 #   --max-turns N      Max Claude turns per attempt (default: 50)
-#   --label LABEL      Only process issues with this label
+#   --label LABEL      Only process issues with this label (can be repeated)
 #   --model MODEL      Claude model to use
 #   -v, --version      Show version
 #   -h, --help         Show this help message
@@ -26,7 +27,8 @@ VERSION=$(node -p "require('$(dirname "$0")/package.json').version" 2>/dev/null 
 
 MAX_RETRIES=3
 MAX_TURNS=50
-ISSUE_FILTER=""
+declare -a ISSUE_FILTERS=()
+ISSUE_IDS=""
 MODEL_FLAG=""
 DATE=$(date +%Y-%m-%d)
 TIMESTAMP=$(date +%H%M%S)
@@ -60,9 +62,10 @@ show_help() {
     echo "  claude-queue create [options] [text] Create issues from text or interactively"
     echo ""
     echo "Solve options:"
+    echo "  --issue ID         Solve specific issue(s) by ID, URL, or comma-separated IDs"
     echo "  --max-retries N    Max retries per issue (default: 3)"
     echo "  --max-turns N      Max Claude turns per attempt (default: 50)"
-    echo "  --label LABEL      Only process issues with this label"
+    echo "  --label LABEL      Only process issues with this label (can be repeated)"
     echo "  --model MODEL      Claude model to use"
     echo "  -v, --version      Show version"
     echo "  -h, --help         Show this help message"
@@ -193,13 +196,59 @@ setup_branch() {
 }
 
 fetch_issues() {
-    local args=(--state open --json "number,title,body,labels" --limit 200)
+    local args=(--state open --json "number,title,body,labels" --limit 200 --sort created --direction asc)
 
-    if [ -n "$ISSUE_FILTER" ]; then
-        args+=(--label "$ISSUE_FILTER")
-    fi
+    for filter in "${ISSUE_FILTERS[@]}"; do
+        args+=(--label "$filter")
+    done
 
     gh issue list "${args[@]}"
+}
+
+parse_issue_number() {
+    local input="$1"
+
+    local num
+    num=$(echo "$input" | grep -oE '[0-9]+$' || echo "")
+
+    if [ -z "$num" ]; then
+        log_error "Invalid issue identifier: $input"
+        return 1
+    fi
+
+    echo "$num"
+}
+
+fetch_specific_issues() {
+    local ids_str="$1"
+    local result="["
+    local first=true
+
+    IFS=',' read -ra id_array <<< "$ids_str"
+    for id in "${id_array[@]}"; do
+        id=$(echo "$id" | xargs)
+
+        local num
+        if ! num=$(parse_issue_number "$id"); then
+            continue
+        fi
+
+        local issue_json
+        issue_json=$(gh issue view "$num" --json "number,title,body,labels" 2>/dev/null) || {
+            log_error "Could not fetch issue #${num}"
+            continue
+        }
+
+        if [ "$first" = true ]; then
+            first=false
+        else
+            result+=","
+        fi
+        result+="$issue_json"
+    done
+
+    result+="]"
+    echo "$result"
 }
 
 process_issue() {
@@ -534,7 +583,12 @@ main() {
     log_header "Fetching Issues"
 
     local issues
-    issues=$(fetch_issues)
+    if [ -n "$ISSUE_IDS" ]; then
+        log "Fetching specific issue(s): ${ISSUE_IDS}"
+        issues=$(fetch_specific_issues "$ISSUE_IDS")
+    else
+        issues=$(fetch_issues)
+    fi
     local total
     total=$(echo "$issues" | jq length)
 
@@ -551,7 +605,7 @@ main() {
         title=$(echo "$issues" | jq -r ".[$i].title")
         labels=$(echo "$issues" | jq -r "[.[$i].labels[].name] | join(\",\")" 2>/dev/null || echo "")
 
-        if echo "$labels" | grep -q "claude-queue:"; then
+        if [ -z "$ISSUE_IDS" ] && echo "$labels" | grep -q "claude-queue:"; then
             log "Skipping #${number} (already has a claude-queue label)"
             SKIPPED_ISSUES+=("${number}|${title}")
             continue
@@ -949,9 +1003,10 @@ case "$SUBCOMMAND" in
     "")
         while [[ $# -gt 0 ]]; do
             case $1 in
+                --issue)       ISSUE_IDS="$2"; shift 2 ;;
                 --max-retries) MAX_RETRIES="$2"; shift 2 ;;
                 --max-turns)   MAX_TURNS="$2";   shift 2 ;;
-                --label)       ISSUE_FILTER="$2"; shift 2 ;;
+                --label)       ISSUE_FILTERS+=("$2"); shift 2 ;;
                 --model)       MODEL_FLAG="--model $2"; shift 2 ;;
                 -v|--version)  echo "claude-queue v${VERSION}"; exit 0 ;;
                 -h|--help)     show_help; exit 0 ;;

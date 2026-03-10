@@ -36,17 +36,30 @@ claude-queue
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--issue ID` | all issues | Solve specific issue(s) by ID, URL, or comma-separated IDs |
 | `--max-retries N` | `3` | Max retry attempts per issue before marking it failed |
 | `--max-turns N` | `50` | Max Claude Code turns per attempt |
-| `--label LABEL` | all issues | Only process issues with this label |
+| `--label LABEL` | all issues | Only process issues with this label (can be repeated) |
 | `--model MODEL` | CLI default | Claude model to use (e.g. `claude-sonnet-4-5-20250929`) |
 
 ```bash
 # Solve all open issues
 claude-queue
 
+# Solve a specific issue by number
+claude-queue --issue 42
+
+# Solve a specific issue by URL
+claude-queue --issue https://github.com/owner/repo/issues/42
+
+# Solve multiple specific issues
+claude-queue --issue 1,2,3
+
 # Only solve issues labeled "bug"
 claude-queue --label bug
+
+# Filter by multiple labels
+claude-queue --label bug --label urgent
 
 # Use a specific model with more retries
 claude-queue --max-retries 5 --model claude-sonnet-4-5-20250929
@@ -128,9 +141,9 @@ Creates a branch `claude-queue/YYYY-MM-DD` off your default branch. All fixes go
 
 ### Issue processing
 
-For each open issue (up to 200, oldest first):
+For each open issue (up to 200, oldest first), or for the specific issues passed via `--issue`:
 
-1. **Skip** — issues with any `claude-queue:*` label are skipped. Remove the label to re-process.
+1. **Skip** — issues with any `claude-queue:*` label are skipped (unless targeted via `--issue`). Remove the label to re-process.
 2. **Label** — marks the issue `claude-queue:in-progress`.
 3. **Solve** — launches Claude Code with a prompt to read the issue, explore the codebase, implement a fix, and run tests.
 4. **Evaluate** — if Claude produced file changes, they are committed. If not, the attempt is retried.
