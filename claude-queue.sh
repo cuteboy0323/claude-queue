@@ -196,7 +196,7 @@ setup_branch() {
 }
 
 fetch_issues() {
-    local args=(--state open --json "number,title,body,labels" --limit 200 --sort created --direction asc)
+    local args=(--state open --json "number,title,body,labels" --limit 200 --search "sort:created-asc")
 
     for filter in "${ISSUE_FILTERS[@]}"; do
         args+=(--label "$filter")
